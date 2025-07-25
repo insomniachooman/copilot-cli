@@ -50,14 +50,19 @@ function translateAnthropicMessagesToOpenAI(
   system: string | Array<AnthropicTextBlock> | undefined,
 ): Array<Message> {
   const systemMessages = handleSystemPrompt(system)
+  const translatedMessages: Array<Message> = []
 
-  const otherMessages = anthropicMessages.flatMap((message) =>
-    message.role === "user" ?
-      handleUserMessage(message)
-    : handleAssistantMessage(message),
-  )
+  for (const message of anthropicMessages) {
+    if (message.role === "user") {
+      const userMessages = handleUserMessage(message)
+      translatedMessages.push(...userMessages)
+    } else {
+      const assistantMessages = handleAssistantMessage(message)
+      translatedMessages.push(...assistantMessages)
+    }
+  }
 
-  return [...systemMessages, ...otherMessages]
+  return [...systemMessages, ...translatedMessages]
 }
 
 function handleSystemPrompt(
@@ -76,39 +81,55 @@ function handleSystemPrompt(
 }
 
 function handleUserMessage(message: AnthropicUserMessage): Array<Message> {
-  const newMessages: Array<Message> = []
-
   if (Array.isArray(message.content)) {
     const toolResultBlocks = message.content.filter(
       (block): block is AnthropicToolResultBlock =>
         block.type === "tool_result",
     )
-    const otherBlocks = message.content.filter(
-      (block) => block.type !== "tool_result",
+
+    const textBlocks = message.content.filter(
+      (block): block is AnthropicTextBlock => block.type === "text",
     )
 
-    if (otherBlocks.length > 0) {
-      newMessages.push({
-        role: "user",
-        content: mapContent(otherBlocks),
-      })
-    }
-
-    for (const block of toolResultBlocks) {
-      newMessages.push({
-        role: "tool",
+    // If there are tool results, we need to handle them carefully
+    if (toolResultBlocks.length > 0) {
+      const toolMessages = toolResultBlocks.map((block) => ({
+        role: "tool" as const,
         tool_call_id: block.tool_use_id,
         content: block.content,
-      })
+      }))
+
+      // If there are also text blocks, add them as a separate user message after tool results
+      if (textBlocks.length > 0) {
+        const textContent = textBlocks.map((block) => block.text).join("\n\n")
+        return [
+          ...toolMessages,
+          {
+            role: "user" as const,
+            content: textContent,
+          },
+        ]
+      }
+
+      return toolMessages
     }
-  } else {
-    newMessages.push({
-      role: "user",
-      content: mapContent(message.content),
-    })
+
+    // If no tool results, process as a normal user message with its content.
+    return [
+      {
+        role: "user",
+        content: mapContent(message.content),
+      },
+    ]
   }
 
-  return newMessages
+  // If content is just a string, it's a simple user message.
+  return [
+    {
+      role: "user",
+      content: message.content,
+    },
+  ]
 }
 
 function handleAssistantMessage(
