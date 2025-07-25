@@ -4,6 +4,8 @@ node_modules/
 # local env
 *.local
 
+gemini-cli/
+litellm/
 # aider
 .aider*
 

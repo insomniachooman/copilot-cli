@@ -34,9 +34,9 @@ export async function forwardError(c: Context, error: unknown) {
     // Create a new response with the same properties as the original error response
     // This prevents issues with the body being consumed
     const headers = new Headers()
-    for (const [key, value] of error.response.headers.entries()) {
+    error.response.headers.forEach((value, key) => {
       headers.set(key, value)
-    }
+    })
 
     // Read the body from another clone for the response
     let responseBody: string

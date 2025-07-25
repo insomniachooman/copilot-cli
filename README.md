@@ -19,6 +19,7 @@ A reverse-engineered proxy for the GitHub Copilot API that exposes it as an Open
 
 - **OpenAI & Anthropic Compatibility**: Exposes GitHub Copilot as an OpenAI-compatible (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`) and Anthropic-compatible (`/v1/messages`) API.
 - **Claude Code Integration**: Easily configure and launch [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) to use Copilot as its backend with a simple command-line flag (`--claude-code`).
+- **Gemini CLI Integration**: Support for OpenAI-compatible Gemini CLI tools with model selection and enforcement (`--gemini-cli`).
 - **Usage Dashboard**: A web-based dashboard to monitor your Copilot API usage, view quotas, and see detailed statistics.
 - **Rate Limit Control**: Manage API usage with rate-limiting options (`--rate-limit`) and a waiting mechanism (`--wait`) to prevent errors from rapid requests.
 - **Manual Request Approval**: Manually approve or deny each API request for fine-grained control over usage (`--manual`).
@@ -100,6 +101,7 @@ The following command line options are available for the `start` command:
 | --wait         | Wait instead of error when rate limit is hit                                  | false      | -w    |
 | --github-token | Provide GitHub token directly (must be generated using the `auth` subcommand) | none       | -g    |
 | --claude-code  | Generate a command to launch Claude Code with Copilot API config              | false      | -c    |
+| --gemini-cli   | Generate a command to launch Gemini CLI with Copilot API config               | false      | none  |
 | --show-token   | Show GitHub and Copilot tokens on fetch and refresh                           | false      | none  |
 
 ### Auth Command Options
@@ -131,6 +133,16 @@ These endpoints are designed to be compatible with the Anthropic Messages API.
 | -------------------------------- | ------ | ------------------------------------------------------------ |
 | `POST /v1/messages`              | `POST` | Creates a model response for a given conversation.           |
 | `POST /v1/messages/count_tokens` | `POST` | Calculates the number of tokens for a given set of messages. |
+
+### Gemini Compatible Endpoints
+
+These endpoints are designed to be compatible with Google's Gemini API.
+
+| Endpoint                                           | Method | Description                                               |
+| -------------------------------------------------- | ------ | --------------------------------------------------------- |
+| `POST /v1beta/models/{model}:countTokens`          | `POST` | Counts the number of tokens in the provided content.      |
+| `POST /v1beta/models/{model}:generateContent`      | `POST` | Generates a response for the given conversation.          |
+| `POST /v1beta/models/{model}:streamGenerateContent`| `POST` | Streams the response for the given conversation.          |
 
 ### Usage Monitoring Endpoints
 
@@ -236,6 +248,34 @@ Here is an example `.claude/settings.json` file:
 You can find more options here: [Claude Code settings](https://docs.anthropic.com/en/docs/claude-code/settings#environment-variables)
 
 You can also read more about IDE integration here: [Add Claude Code to your IDE](https://docs.anthropic.com/en/docs/claude-code/ide-integrations)
+
+## Using with Gemini CLI
+
+This proxy can also be used with OpenAI-compatible Gemini CLI tools. When you use the `--gemini-cli` flag, the proxy will prompt you to select a model and then enforce that model for all requests.
+
+### Interactive Setup with `--gemini-cli` flag
+
+To get started with Gemini CLI:
+
+```sh
+npx copilot-api@latest start --gemini-cli
+```
+
+You will be prompted to select a model from the available Copilot models. The proxy will then:
+1. Store your selected model and enforce it for all incoming requests
+2. Generate and copy the required environment variables to your clipboard
+3. Display the selected model information
+
+The generated command will set these environment variables:
+- `GOOGLE_GEMINI_BASE_URL`: Points to your local proxy server
+- `GEMINI_API_KEY`: A dummy API key (authentication is handled by the proxy)
+
+### Key Features
+
+- **Model Enforcement**: Unlike Claude Code which allows model selection per request, Gemini CLI integration enforces the selected model for all requests. This ensures consistent behavior since Gemini CLI doesn't support model selection.
+- **Automatic Configuration**: The required environment variables are automatically generated and copied to your clipboard.
+- **Compatibility**: Works with any OpenAI-compatible client that expects Gemini-style environment variables.
+- **Token Counting Support**: Includes a Gemini-compatible token counting endpoint at `/v1beta/models/{model}:countTokens` for proper token usage tracking.
 
 ## Running from Source
 

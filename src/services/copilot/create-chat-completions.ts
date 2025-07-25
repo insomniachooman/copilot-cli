@@ -39,7 +39,11 @@ export const createChatCompletions = async (
     throw new HTTPError("Failed to create chat completions", response)
   }
 
+  consola.debug("Response headers:", Object.fromEntries(response.headers.entries()))
+  consola.debug("Response content-type:", response.headers.get('content-type'))
+
   if (payload.stream) {
+    consola.debug("Returning streaming response via events()")
     return events(response)
   }
 

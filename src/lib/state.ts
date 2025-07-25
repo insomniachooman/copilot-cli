@@ -15,6 +15,9 @@ export interface State {
   // Rate limiting configuration
   rateLimitSeconds?: number
   lastRequestTimestamp?: number
+
+  // Gemini CLI model selection
+  geminiCliModel?: string
 }
 
 export const state: State = {

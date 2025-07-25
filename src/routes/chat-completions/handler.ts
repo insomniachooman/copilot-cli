@@ -20,6 +20,15 @@ export async function handleCompletion(c: Context) {
   let payload = await c.req.json<ChatCompletionsPayload>()
   consola.debug("Request payload:", JSON.stringify(payload).slice(-400))
 
+  // Enforce gemini-cli model if selected
+  if (state.geminiCliModel) {
+    consola.info(`Enforcing Gemini CLI model: ${state.geminiCliModel}`)
+    payload = {
+      ...payload,
+      model: state.geminiCliModel,
+    }
+  }
+
   consola.info("Current token count:", getTokenCount(payload.messages))
 
   if (state.manualApprove) await awaitApproval()

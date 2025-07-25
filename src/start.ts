@@ -22,6 +22,7 @@ interface RunServerOptions {
   rateLimitWait: boolean
   githubToken?: string
   claudeCode: boolean
+  geminiCli: boolean
   showToken: boolean
 }
 
@@ -93,6 +94,34 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     consola.success("Copied Claude Code command to clipboard!")
   }
 
+  if (options.geminiCli) {
+    invariant(state.models, "Models should be loaded by now")
+
+    const selectedModel = await consola.prompt(
+      "Select a model to use with Gemini CLI",
+      {
+        type: "select",
+        options: state.models.data.map((model) => model.id),
+      },
+    )
+
+    // Store the selected model in state for later use
+    state.geminiCliModel = selectedModel
+
+    const command = generateEnvScript(
+      {
+        GOOGLE_GEMINI_BASE_URL: serverUrl,
+        GEMINI_API_KEY: "sk-1234567890",
+      },
+      "",
+    )
+
+    clipboard.writeSync(command)
+    consola.success("Copied Gemini CLI command to clipboard!")
+    consola.info(`Selected model: ${selectedModel}`)
+    consola.info("The selected model will be enforced for all requests when using Gemini CLI")
+  }
+
   consola.box(
     `🌐 Usage Viewer: https://ericc-ch.github.io/copilot-api?endpoint=${serverUrl}/usage`,
   )
@@ -157,6 +186,12 @@ export const start = defineCommand({
       description:
         "Generate a command to launch Claude Code with Copilot API config",
     },
+    "gemini-cli": {
+      type: "boolean",
+      default: false,
+      description:
+        "Generate a command to launch Gemini CLI with Copilot API config",
+    },
     "show-token": {
       type: "boolean",
       default: false,
@@ -178,6 +213,7 @@ export const start = defineCommand({
       rateLimitWait: Boolean(args.wait),
       githubToken: args["github-token"],
       claudeCode: args["claude-code"],
+      geminiCli: args["gemini-cli"],
       showToken: args["show-token"],
     })
   },
