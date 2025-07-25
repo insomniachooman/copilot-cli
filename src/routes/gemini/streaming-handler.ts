@@ -1,6 +1,5 @@
 import type { Context } from "hono"
 import consola from "consola"
-import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
 import { checkRateLimit } from "~/lib/rate-limit"
@@ -101,184 +100,217 @@ export async function handleGeminiStreaming(c: Context) {
       
       const tokenCounts = getTokenCount([...messages, { role: "assistant", content: responseText }])
 
-      return streamSSE(c, async (stream) => {
-        try {
-          // Send the content chunk in direct Google genai format
-          const contentChunk: GoogleGenaiStreamResponse = {
-            candidates: [
-              {
-                content: {
-                  role: "model",
-                  parts: [
-                    {
-                      text: responseText,
-                    },
-                  ],
-                },
-              },
-            ],
-          }
+      // Create raw SSE response for Gemini CLI compatibility
+      c.header('Content-Type', 'text/event-stream; charset=utf-8')
+      c.header('Cache-Control', 'no-cache')
+      c.header('Connection', 'keep-alive')
+      c.header('Access-Control-Allow-Origin', '*')
+      c.header('Access-Control-Allow-Headers', 'Content-Type')
+      c.header('X-Accel-Buffering', 'no')
 
-          await stream.writeSSE({
-            data: JSON.stringify(contentChunk)
-          })
-
-          // Send the final chunk with usage metadata
-          const finalChunk: GoogleGenaiStreamResponse = {
-            candidates: [
-              {
-                content: {
-                  role: "model",
-                  parts: [{ text: "" }],
-                },
-                finishReason: choice.finish_reason === "stop" ? "STOP" : "OTHER",
-              },
-            ],
-            usageMetadata: {
-              promptTokenCount: tokenCounts.input,
-              candidatesTokenCount: tokenCounts.output,
-              totalTokenCount: tokenCounts.input + tokenCounts.output,
-            },
-          }
-
-          await stream.writeSSE({
-            data: JSON.stringify(finalChunk)
-          })
+      const stream = new ReadableStream({
+        start(controller) {
+          const encoder = new TextEncoder()
           
-          // Send final termination
-          await stream.writeSSE({
-            data: "[DONE]"
-          })
-        } catch (error) {
-          consola.error("Error in non-streaming conversion:", error)
+          try {
+            // Send the content chunk in exact Google Gemini API format
+            const contentChunk: GoogleGenaiStreamResponse = {
+              candidates: [
+                {
+                  content: {
+                    role: "model",
+                    parts: [
+                      {
+                        text: responseText,
+                      },
+                    ],
+                  },
+                },
+              ],
+            }
+
+            const contentData = `data: ${JSON.stringify(contentChunk)}\n\n`
+            consola.debug("Sending content chunk:", contentData)
+            controller.enqueue(encoder.encode(contentData))
+
+            // Send the final chunk with usage metadata
+            const finalChunk: GoogleGenaiStreamResponse = {
+              candidates: [
+                {
+                  content: {
+                    role: "model",
+                    parts: [{ text: "" }],
+                  },
+                  finishReason: choice.finish_reason === "stop" ? "STOP" : "OTHER",
+                },
+              ],
+              usageMetadata: {
+                promptTokenCount: tokenCounts.input,
+                candidatesTokenCount: tokenCounts.output,
+                totalTokenCount: tokenCounts.input + tokenCounts.output,
+              },
+            }
+
+            const finalData = `data: ${JSON.stringify(finalChunk)}\n\n`
+            consola.debug("Sending final chunk:", finalData)
+            controller.enqueue(encoder.encode(finalData))
+            
+            // End the stream properly for Gemini CLI
+            const doneData = 'data: [DONE]\n\n'
+            consola.debug("Sending DONE signal:", doneData)
+            controller.enqueue(encoder.encode(doneData))
+            
+            controller.close()
+            consola.debug("Stream closed successfully")
+          } catch (error) {
+            consola.error("Error in non-streaming SSE conversion:", error)
+            controller.error(error)
+          }
         }
       })
+
+      return c.body(stream)
     }
 
-    // Stream the response in Gemini format
-    return streamSSE(c, async (stream) => {
-      let accumulatedText = ""
+    // Stream the response in raw SSE format for Gemini CLI
+    c.header('Content-Type', 'text/event-stream; charset=utf-8')
+    c.header('Cache-Control', 'no-cache')
+    c.header('Connection', 'keep-alive')
+    c.header('Access-Control-Allow-Origin', '*')
+    c.header('Access-Control-Allow-Headers', 'Content-Type')
+    c.header('X-Accel-Buffering', 'no')
 
-      try {
-        consola.info("Starting to process stream")
-        
-        for await (const event of response) {
-          consola.info("Received streaming event:", event)
-          
-          // Handle SSE message with data field
-          if (event.data) {
-            const eventData = event.data
+    const stream = new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder()
+        let accumulatedText = ""
+
+        const processStream = async () => {
+          try {
+            consola.info("Starting to process stream")
             
-            // Skip empty data or heartbeat events
-            if (!eventData || eventData.trim() === '') {
-              continue
-            }
-            
-            // Check for stream end
-            if (eventData === "[DONE]") {
-              consola.debug("Stream ended with [DONE]")
-              break
-            }
-
-            let chunk
-            try {
-              chunk = JSON.parse(eventData)
-            } catch (parseError) {
-              consola.warn("Failed to parse SSE chunk:", eventData, parseError)
-              continue
-            }
-
-            // Handle content chunks from OpenAI format
-            if (chunk.choices?.[0]?.delta?.content) {
-              accumulatedText += chunk.choices[0].delta.content
-
-              const geminiChunk: GoogleGenaiStreamResponse = {
-                candidates: [
-                  {
-                    content: {
-                      role: "model",
-                      parts: [
-                        {
-                          text: chunk.choices[0].delta.content,
-                        },
-                      ],
-                    },
-                  },
-                ],
-              }
-
-              consola.debug("Sending chunk:", JSON.stringify(geminiChunk))
-              await stream.writeSSE({
-                data: JSON.stringify(geminiChunk)
-              })
-            }
-
-            // Handle the finish reason
-            if (chunk.choices?.[0]?.finish_reason) {
-              consola.debug("Stream finished with reason:", chunk.choices[0].finish_reason)
+            for await (const event of response) {
+              consola.info("Received streaming event:", event)
               
-              const tokenCounts = getTokenCount([
-                ...messages,
-                { role: "assistant", content: accumulatedText },
-              ])
+              // Handle SSE message with data field
+              if (event.data) {
+                const eventData = event.data
+                
+                // Skip empty data or heartbeat events
+                if (!eventData || eventData.trim() === '') {
+                  continue
+                }
+                
+                // Check for stream end
+                if (eventData === "[DONE]") {
+                  consola.debug("Stream ended with [DONE]")
+                  break
+                }
 
-              const finalChunk: GoogleGenaiStreamResponse = {
-                candidates: [
-                  {
-                    content: {
-                      role: "model",
-                      parts: [{ text: "" }],
+                let chunk
+                try {
+                  chunk = JSON.parse(eventData)
+                } catch (parseError) {
+                  consola.warn("Failed to parse SSE chunk:", eventData, parseError)
+                  continue
+                }
+
+                // Handle content chunks from OpenAI format
+                if (chunk.choices?.[0]?.delta?.content) {
+                  accumulatedText += chunk.choices[0].delta.content
+
+                  const geminiChunk: GoogleGenaiStreamResponse = {
+                    candidates: [
+                      {
+                        content: {
+                          role: "model",
+                          parts: [
+                            {
+                              text: chunk.choices[0].delta.content,
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  }
+
+                  const chunkData = `data: ${JSON.stringify(geminiChunk)}\n\n`
+                  consola.debug("Sending chunk:", chunkData)
+                  controller.enqueue(encoder.encode(chunkData))
+                }
+
+                // Handle the finish reason
+                if (chunk.choices?.[0]?.finish_reason) {
+                  consola.debug("Stream finished with reason:", chunk.choices[0].finish_reason)
+                  
+                  const tokenCounts = getTokenCount([
+                    ...messages,
+                    { role: "assistant", content: accumulatedText },
+                  ])
+
+                  const finalChunk: GoogleGenaiStreamResponse = {
+                    candidates: [
+                      {
+                        content: {
+                          role: "model",
+                          parts: [{ text: "" }],
+                        },
+                        finishReason:
+                          chunk.choices[0].finish_reason === "stop" ? "STOP" : "OTHER",
+                      },
+                    ],
+                    usageMetadata: {
+                      promptTokenCount: tokenCounts.input,
+                      candidatesTokenCount: tokenCounts.output,
+                      totalTokenCount: tokenCounts.input + tokenCounts.output,
                     },
-                    finishReason:
-                      chunk.choices[0].finish_reason === "stop" ? "STOP" : "OTHER",
-                  },
-                ],
+                  }
+
+                  const finalData = `data: ${JSON.stringify(finalChunk)}\n\n`
+                  consola.debug("Sending final chunk:", finalData)
+                  controller.enqueue(encoder.encode(finalData))
+                  
+                  const doneData = 'data: [DONE]\n\n'
+                  consola.debug("Sending DONE signal:", doneData)
+                  controller.enqueue(encoder.encode(doneData))
+                  break
+                }
+              }
+            }
+          } catch (streamError) {
+            consola.error("Error processing stream:", streamError)
+            // Send an error chunk to properly close the stream
+            try {
+              const errorChunk: GoogleGenaiStreamResponse = {
+                candidates: [{
+                  content: { role: "model", parts: [{ text: "" }] },
+                  finishReason: "OTHER"
+                }],
                 usageMetadata: {
-                  promptTokenCount: tokenCounts.input,
-                  candidatesTokenCount: tokenCounts.output,
-                  totalTokenCount: tokenCounts.input + tokenCounts.output,
+                  promptTokenCount: 0,
+                  candidatesTokenCount: 0,
+                  totalTokenCount: 0,
                 },
               }
 
-              consola.debug("Sending final chunk:", JSON.stringify(finalChunk))
-              await stream.writeSSE({
-                data: JSON.stringify(finalChunk)
-              })
-              
-              // Properly terminate the SSE stream
-              await stream.writeSSE({
-                data: "[DONE]"
-              })
-              break
+              const errorData = `data: ${JSON.stringify(errorChunk)}\n\n`
+              controller.enqueue(encoder.encode(errorData))
+              const doneData = 'data: [DONE]\n\n'
+              controller.enqueue(encoder.encode(doneData))
+            } catch (writeError) {
+              consola.error("Failed to write error chunk:", writeError)
             }
+          } finally {
+            consola.debug("Stream processing finished, closing controller")
+            controller.close()
           }
         }
-      } catch (streamError) {
-        consola.error("Error processing stream:", streamError)
-        // Send an error chunk to properly close the stream with complete metadata
-        try {
-          const errorChunk: GoogleGenaiStreamResponse = {
-            candidates: [{
-              content: { role: "model", parts: [{ text: "" }] },
-              finishReason: "OTHER"
-            }],
-            usageMetadata: {
-              promptTokenCount: 0,
-              candidatesTokenCount: 0,
-              totalTokenCount: 0,
-            },
-          }
 
-          await stream.writeSSE({
-            data: JSON.stringify(errorChunk)
-          })
-        } catch (writeError) {
-          consola.error("Failed to write error chunk:", writeError)
-        }
+        processStream()
       }
-      
-      consola.debug("Stream processing finished")
     })
+
+    return c.body(stream)
   } catch (error) {
     consola.error("Error in Gemini streaming:", error)
     return c.json({ error: "Failed to process streaming request" }, 500)
